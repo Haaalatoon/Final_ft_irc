@@ -11,7 +11,7 @@ Server::~Server() {}
 
 void Server::start() {
     signal(SIGINT, Server::signalHandler);
-    // signal(SIGPIPE, SIG_IGN);
+    signal(SIGPIPE, SIG_IGN);
     initSocket();
     _running = true;
     while (_running) {
@@ -147,7 +147,7 @@ void Server::parseMessages(int fd) {
 
 bool Server::handleClientData(size_t& index) {
     int fd = pollFD[index].fd;
-    char temp[1024];
+    char temp[1024] = {0};
     int rc = recv(fd, temp, sizeof(temp), 0);
     if (rc <= 0) {
         if (rc == 0) {
@@ -157,7 +157,9 @@ bool Server::handleClientData(size_t& index) {
         return false;
     }
     clients[fd].appendToBuffer(temp, rc);
-    parseMessages(fd);
+    if (temp[rc - 1] == '\n'){
+        parseMessages(fd);
+    }
     return false;
 }
 
