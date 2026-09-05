@@ -11,10 +11,12 @@ Server::~Server() {}
 
 void Server::start() {
     signal(SIGINT, Server::signalHandler);
+    // signal(SIGPIPE, SIG_IGN);
     initSocket();
     _running = true;
     while (_running) {
-        poll(&pollFD[0], pollFD.size(), -1);
+        if (poll(&pollFD[0], pollFD.size(), -1) < 0)
+            break;
         for (size_t i = 0; i < pollFD.size(); ++i) {
             if (pollFD[i].revents & (POLLHUP | POLLERR)) {
                 removeClient(pollFD[i].fd);
@@ -24,9 +26,9 @@ void Server::start() {
             if (pollFD[i].revents & POLLIN) {
                 if (pollFD[i].fd == _fd) {
                         int newfd = acceptClientInternal();
-                        if (newfd == -1) break;
+                        if (newfd == -1) continue;
                 } else {
-                    if (handleClientData(i)) --i;
+                    if (handleClientData(i)) { --i; continue; }
                 }
             }
             if (pollFD[i].revents & POLLOUT) {
@@ -37,8 +39,12 @@ void Server::start() {
 
                     if (!out.empty()) {
                         ssize_t sent = send(fd, out.c_str(), out.size(), 0);
-                        if (sent >= 0)
-                            out.erase(0, sent);
+                        if (sent < 0) {
+                            removeClient(fd);
+                                --i;
+                            continue;
+                        }
+                        out.erase(0, sent);
                     }
                     if (out.empty()) {
                         for (size_t j = 0; j < pollFD.size(); ++j)
@@ -48,8 +54,12 @@ void Server::start() {
             }
         }
     }
+    std::vector<int> toClose;
     for (size_t i = 0; i < pollFD.size(); ++i)
-        if (pollFD[i].fd != _fd) removeClient(pollFD[i].fd);
+        if (pollFD[i].fd != _fd) toClose.push_back(pollFD[i].fd);
+    for (size_t i = 0; i < toClose.size(); ++i)
+        removeClient(toClose[i]);
+
     for (std::map<std::string, Channel*>::iterator it = channels.begin();
          it != channels.end(); ++it)
         delete it->second;
@@ -84,7 +94,8 @@ void Server::bindAndListen() {
 int Server::acceptClientInternal() {
     socklen_t len = sizeof(addr);
     int newfd = accept(_fd, (struct sockaddr*)&addr, &len);
-
+    if (newfd < 0) 
+        return -1;
     fcntl(newfd, F_SETFL, O_NONBLOCK);
     struct pollfd pfd;
     pfd.fd = newfd;
